@@ -1180,50 +1180,49 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
                 if verbose:
                     print('Done with sorting!')
                 # Now we have a list of the top score of each alignment for the current entry_record.
-                with recblast_output.open("w+") as rb_out:
-                    if verbose:
-                        print('Annotating BLAST results')
-                    has_written2 = False
-                    for align_index2, alignment in enumerate(blastrecord2.alignments):
-                        blast_got_hit2 = False
-                        for hsp2 in alignment.hsps:
-                            if (hsp2.score >= (perc_score * align_scorelist2[align_index2])):
-                                print('hsp score above threshold')
-                                if (hsp2.expect <= expect):
-                                    print('hsp expect below threshold')
-                                    if (sum([i[-1] - i[0] for i in
-                                             query_start_end2[
-                                                 align_index2]]) / blastrecord2.query_length >= perc_length):
-                                        print('hsp perc length above threshold')
-                                        if verbose:
-                                            print('Found hit!')
-                                        entry_record.id += '\t||{0} ({1})'.format(alignment.title +
-                                                                                  ' [:{0}-{1}]'.format(
-                                                                                      subject_range2[align_index2][0],
-                                                                                      subject_range2[align_index2][0]
-                                                                                  ), hsp.score)
-                                        SeqIO.write(entry_record, rb_out, output_type)
-                                        has_written2 = True
-                                        blast_got_hit2 = True
-                                    else:
-                                        print('WARNING HSP LENGTH BELOW THRESHOLD')
-                                        print(sum([i[-1] - i[0] for i in
-                                                   query_start_end2[align_index2]]) / blastrecord2.query_length,
-                                              ' not greater than ', perc_length)
+            with recblast_output.open("w+") as rb_out:
+                if verbose:
+                    print('Annotating BLAST results')
+                has_written2 = False
+                for align_index2, alignment in enumerate(blastrecord2.alignments):
+                    blast_got_hit2 = False
+                    for hsp2 in alignment.hsps:
+                        if (hsp2.score >= (perc_score * align_scorelist2[align_index2])):
+                            print('hsp score above threshold')
+                            if (hsp2.expect <= expect):
+                                print('hsp expect below threshold')
+                                if (sum([i[-1] - i[0] for i in
+                                         query_start_end2[
+                                             align_index2]]) / blastrecord2.query_length >= perc_length):
+                                    print('hsp perc length above threshold')
+                                    if verbose:
+                                        print('Found hit!')
+                                    entry_record.id += '\t||{0} ({1})'.format(alignment.title +
+                                                                              ' [:{0}-{1}]'.format(
+                                                                                  subject_range2[align_index2][0],
+                                                                                  subject_range2[align_index2][0]
+                                                                              ), hsp.score)
+                                    SeqIO.write(entry_record, rb_out, output_type)
+                                    has_written2 = True
+                                    blast_got_hit2 = True
                                 else:
-                                    print('WARNING HSP EXPECT ABOVE THRESHOLD')
-                                    print(hsp2.expect, 'not less than', expect)
+                                    print('WARNING HSP LENGTH BELOW THRESHOLD')
+                                    print(sum([i[-1] - i[0] for i in
+                                               query_start_end2[align_index2]]) / blastrecord2.query_length,
+                                          ' not greater than ', perc_length)
                             else:
-                                print('WARNING HSP SCORE BELOW THRESHOLD')
-                                print(hsp2.score, ' not greater than ', (perc_score * align_scorelist2[align_index2]))
-
-                                # else:
-                                # continue
-                        if not blast_got_hit2:
-                            print('NOTE: Alignment {} was not used to annotate.'.format(alignment.title))
-                    if not has_written2:
-                        print(Warning('NONE OF THE REVERSE BLAST HITS FOR THIS RUN MET ANNOTATION CRITERIA!'))
-                        continue
+                                print('WARNING HSP EXPECT ABOVE THRESHOLD')
+                                print(hsp2.expect, 'not less than', expect)
+                        else:
+                            print('WARNING HSP SCORE BELOW THRESHOLD')
+                            print(hsp2.score, ' not greater than ', (perc_score * align_scorelist2[align_index2]))
+                            # else:
+                            # continue
+                    if not blast_got_hit2:
+                        print('NOTE: Alignment {} was not used to annotate.'.format(alignment.title))
+                if not has_written2:
+                    print(Warning('NONE OF THE REVERSE BLAST HITS FOR THIS RUN MET ANNOTATION CRITERIA!'))
+                    continue
         if verbose:
             print('DONE!!!!')
             # Done!
