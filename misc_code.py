@@ -316,57 +316,28 @@ def biosql_getrecord(sub_db_name, passwd, id_list=list(), id_type='accession', d
     # So I'm wrapping all fetching functions in biosql_DBSeqRecord_to_SeqRecord() to avoid the issue.
 
     from BioSQL import BioSeqDatabase
-    import time
     if id_list:
         pass
     else:
         raise Exception('Received List was empty')
-    try_counter = 0
-    if parallel:
-        from random import randrange
-        time_to_wait = randrange(1, 10, step=0.5)
-    else:
-        time_to_wait = 0
-    while try_counter <= 3:
-        time.sleep(time_to_wait)
-        try_counter += 1
-        try:
-            if verbose:
-                print("Opening database server ", db)
-            server = BioSeqDatabase.open_database(driver=driver, user=user, passwd=passwd, host=host, db=db)
-            if verbose:
-                print("Server opened successfully!")
-            try_counter = 4
-        except:
-            print('Sorry, couldn\'t open the database! Retrying in {} seconds...'.format(str(time_to_wait **
-                                                                                             try_counter)))
     try:
-        server
-    except NameError:
-        raise Exception('Server could not be opened!')
-    try_counter = 0
-    if parallel:
-        from random import randrange
-        time_to_wait = randrange(1, 10, step=0.5)
-    else:
-        time_to_wait = 0
-    while try_counter <= 3:
-        time.sleep(time_to_wait)
-        try_counter += 1
-        try:
-            if verbose:
-                print("Opening sub-database ", sub_db_name)
-            dtbse = server[sub_db_name]
-            if verbose:
-                print("Successfully opened sub-database!")
-            try_counter = 4
-        except:
-            print('Sorry, couldn\'t open the sub-database! Retrying in {} seconds...'.format(str(time_to_wait **
-                                                                                                 try_counter)))
+        if verbose:
+            print("Opening database server ", db)
+        server = BioSeqDatabase.open_database(driver=driver, user=user, passwd=passwd, host=host, db=db)
+        if verbose:
+            print("Server opened successfully!")
+    except:
+        print('Sorry, couldn\'t open the server!')
+        raise
     try:
-        dtbse
-    except NameError:
-        raise Exception('sub-database could not be opened!')
+        if verbose:
+            print("Opening sub-database ", sub_db_name)
+        dtbse = server[sub_db_name]
+        if verbose:
+            print("Successfully opened sub-database!")
+    except:
+        print('Sorry, couldn\'t open the sub-database!')
+        raise
     seqdict = {}
     for identifier in id_list:
         try_get_id = True
@@ -869,12 +840,10 @@ def crosscheck():
 
 def blast(seq_record, target_species, database, query_species="Homo sapiens", filetype="fasta", blast_type='blastn',
           local_blast=False, expect=0.005, megablast=True, blastoutput_custom="", perc_ident=75,
-          verbose=True, **kwargs):
+          verbose=True, write=True, BLASTDB='/usr/db/blastdb', **kwargs):
     from pathlib import Path
     from Bio import SeqIO
     from Bio.Blast import NCBIWWW
-    from Bio.Blast.Applications import NcbiblastxCommandline, NcbiblastnCommandline, NcbiblastpCommandline, \
-        NcbitblastxCommandline, NcbitblastnCommandline
     if isinstance(seq_record, SeqIO.SeqRecord):
         pass
     else:
@@ -882,43 +851,59 @@ def blast(seq_record, target_species, database, query_species="Homo sapiens", fi
     args = dict()
     if verbose:
         print("Now starting BLAST...")
-    if blast_type == 'blastn':
-        args['megablast'] = megablast
     if kwargs:
         args.update(**kwargs)
-    # Begin by opening recblast_out, and then start with the primary BLAST
+    # Begin by opening blast_out, and then start with the primary BLAST
     if blastoutput_custom == '':
         blastoutput_custom = Path("{0}_blast".format(target_species),
                                   "{0}_{1}_{2}_to_{3}.xml".format(blast_type, seq_record.name,
                                                                   query_species, target_species))
     else:
         blastoutput_custom = Path(blastoutput_custom)
-    recstring = str(seq_record.seq)
     if local_blast:
-        args.update({'query': recstring, 'db': database, 'expect': expect, 'outfmt': 5,
-                     'out': str(blastoutput_custom), 'perc_ident': perc_ident})
+        import subprocess
+        args.update({'-db': database, '-evalue': expect,
+                     '-outfmt': '5',
+                     '-num_threads': n_threads})
+        if blast_type == 'blastn':
+            if megablast:
+                args['-task'] = 'megablast'
+            args['-use_index'] = use_index
+            args['-perc_identity'] = perc_ident
+        args_expanded = list()
+        [(args_expanded.append(j), args_expanded.append(k)) for j, k in args.items()]
         if verbose:
             print('Running Local Blast...')
-        if blast_type == "blastn":
-            NcbiblastnCommandline(**args)
-        elif blast_type == "blastp":
-            NcbiblastpCommandline(**args)
-        elif blast_type == "blastx":
-            NcbiblastxCommandline(**args)
-        elif blast_type == "tblastx":
-            NcbitblastxCommandline(**args)
-        elif blast_type == "tblastn":
-            NcbitblastnCommandline(**args)
+            print('Options:')
+            print('\t', args_expanded)
+        # TODO: expand behavior here to use other variants
+        if blast_type in ["blastn", "blastp", "blastx", "tblastx", "tblastn"]:
+            blast_cline = [blast_type] + args_expanded
+            try:
+                blast_call = subprocess.Popen([str(i) for i in blast_cline], stdout=subprocess.PIPE,
+                                              stdin=subprocess.PIPE, cwd=BLASTDB,
+                                              universal_newlines=True)
+                blast_result, blast_err = blast_call.communicate(input=seq_record.format('fasta'))
+            except subprocess.CalledProcessError:
+                raise
         else:
             raise Exception("Invalid blast choice!")
+
     else:
-        args.update(dict(program=str(blast_type), database=str(database), sequence=recstring,
+        args.update(dict(program=str(blast_type), database=str(database), sequence=seq_record.format('fasta'),
                          entrez_query='"{}"[ORGN]'.format(target_species), expect=expect, perc_ident=perc_ident))
-        blast_result = NCBIWWW.qblast(**args)
+        if megablast & (blast_type == 'blastn'):
+            args['task'] = 'megablast'
+        blast_handle = NCBIWWW.qblast(**args)
+        blast_result = blast_handle.read()
+        blast_err = None
         if verbose:
-            print('Done, saving to outfile....')
+            print('Done with Blast!')
+    if write:
         with blastoutput_custom.open("w") as fxml:
-            fxml.write(blast_result.read())
+            fxml.write(blast_result)
+    else:
+        return blast_result, blast_err
 
 
 def blast_many(seqfile, target_species, database, query_species="Homo sapiens", filetype="fasta", blast_type='blastn',
@@ -1159,24 +1144,26 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
                 hsp_scorelist2 = []
                 subject_range2 = []
                 query_start_end2 = []
-                for alignment in blastrecord2.alignments:
+                for alignment2 in blastrecord2.alignments:
                     if verbose:
                         print('Sorting through alignment\'s HSPs to get top scores of all alignments...')
                     subject_range_hsp2 = []
                     query_start_end_hsp2 = []
-                    for hsp2 in alignment.hsps:
+                    for hsp2 in alignment2.hsps:
                         hsp_scorelist2.append(hsp2.score)
                         subject_range_hsp2.append(hsp2.sbjct_start)
                         subject_range_hsp2.append(hsp2.sbjct_end)
                         query_start_end_hsp2.append((hsp2.query_start, hsp2.query_end))
                     hsp_scorelist2.sort(reverse=True)
-                    query_start_end2.append(i for i in merge_ranges(query_start_end_hsp2))
+                    query_start_end2.append([i for i in merge_ranges(query_start_end_hsp2)])
                     subject_range2.append((subject_range_hsp2[0], subject_range_hsp2[-1]))
                     if verbose:
                         print("HSP Score List: \n\t", hsp_scorelist2)
                     align_scorelist2.append(hsp_scorelist2[0])
                     if verbose:
                         print("Alignment Score List: \n\t", align_scorelist2)
+                        print("Query_start_end: \n\t", query_start_end2)
+                        print("Subject Range: \n\t", subject_range2)
                 if verbose:
                     print('Done with sorting!')
                 # Now we have a list of the top score of each alignment for the current entry_record.
@@ -1184,16 +1171,23 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
                 if verbose:
                     print('Annotating BLAST results')
                 has_written2 = False
-                for align_index2, alignment in enumerate(blastrecord2.alignments):
+                for align_index2, alignment2 in enumerate(blastrecord2.alignments):
                     blast_got_hit2 = False
-                    for hsp2 in alignment.hsps:
+                    for hsp2 in alignment2.hsps:
                         if (hsp2.score >= (perc_score * align_scorelist2[align_index2])):
-                            print('hsp score above threshold')
+                            if verbose:
+                                print('hsp score above threshold')
                             if (hsp2.expect <= expect):
-                                print('hsp expect below threshold')
-                                if (sum([i[-1] - i[0] for i in
-                                         query_start_end2[
-                                             align_index2]]) / blastrecord2.query_length >= perc_length):
+                                if verbose:
+                                    print('hsp expect below threshold')
+                                if verbose:
+                                    print('HSP Length: ', query_start_end2[align_index2])
+                                length_alignment = sum([i[-1] - i[0] for i in query_start_end2[align_index2]])
+                                align_len_threshold = blastrecord2.query_length * perc_length
+                                if verbose:
+                                    print(length_alignment)
+                                    print(align_len_threshold)
+                                if length_alignment >= align_len_threshold:
                                     print('hsp perc length above threshold')
                                     if verbose:
                                         print('Found hit!')
