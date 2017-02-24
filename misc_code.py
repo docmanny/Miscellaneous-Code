@@ -193,33 +193,36 @@ def biosql_addrecord(sub_db_name, description, file, passwd, filetype='fasta', d
     if verbose:
         print("Creating new sub-database for file...")
     try:
-        if pretend:
-            print('Pretend is active, this is where I would have committed the info to the server!')
-        else:
-            db = server.new_database(sub_db_name, description=description)
+        try:
+            if verbose:
+                print('Checking to see if sub_db_name exists already.')
+            db = server[sub_db_name]
+            if verbose:
+                print('Database exists, successfully opened sub-db!')
+        except:
+            if pretend:
+                if verbose:
+                    print('Pretend is active, here is where I would have tried to make a new sub-db!')
+            else:
+                db = server.new_database(sub_db_name, description=description)
+                if verbose:
+                    print("Successfully generated new sub-database {0}!".format(sub_db_name))
+                try:
+                    if pretend:
+                        print('Pretend is active, this is where I would have committed the new '
+                              'sub-database to the server!')
+                    else:
+                        if verbose:
+                            print("Committing sub-database to server...")
+                        server.commit()
+                except:
+                    if verbose:
+                        print('Couldn\'t commit new database!')
+                    raise
     except:
         if verbose:
             print('Failed to create new server!')
         raise
-    else:
-        if verbose:
-            print("Successfully generated new sub-database {0}!".format(sub_db_name))
-
-    if verbose:
-        print("Committing sub-database to server...")
-    try:
-        if pretend:
-            print('Pretend is active, this is where I would have committed the new sub-database to the server!')
-        else:
-            server.commit()
-    except:
-        if verbose:
-            print('Couldn\'t commit new database!')
-        raise
-    else:
-        if verbose:
-            print("Sub-database successfully committed!")
-
     if verbose:
         print("Parsing file now for entry into {}... (this takes a while)".format(sub_db_name))
     infile = Path(file)
@@ -412,9 +415,10 @@ def biosql_getrecord(sub_db_name, passwd, id_list=list(), id_type='accession', d
     # End of Function
 
 
-def biosql_addmultirecord(base_dir, passwd='', description_base='Record imported from the file', filetype='fasta',
+def biosql_addmultirecord(base_dir, sub_dir=str(), exclude_dir_list=[], passwd='',
+                          description_base='Record imported from the file', filetype='fasta',
                           driver="psycopg2", user="postgres", host="localhost", db="bioseqdb", verbose=True,
-                          pretend=False):
+                          pretend=True):
     """
     Wrapper for adding FASTA files in a directory hierarchy to a BioSQL database in a automated fashion.
     :param base_dir: The base directory from which the function will begin its search. It assumes that this location
@@ -441,9 +445,25 @@ def biosql_addmultirecord(base_dir, passwd='', description_base='Record imported
         print('Changing directory to {}'.format(base_dir))
     p_base = Path(base_dir)
     for p_sub in [subpath for subpath in p_base.iterdir() if subpath.is_dir()]:
+        if str(p_sub.parts[-1]) in exclude_dir_list:
+            if verbose:
+                print('p_sub in exclusion list, skipping!')
+                continue
+        if sub_dir:
+            p_sub_sub = [str(i.parts[-1]) for i in p_sub.iterdir()]
+            if verbose:
+                print('subdir {} was specified, limiting search to */subdir/'.format(sub_dir))
+                print(p_sub_sub)
+            if sub_dir in p_sub_sub:
+                p_sub = p_sub / sub_dir
+            else:
+                if verbose:
+                    print('Subdir not found in {}, continuing to next subpath!'.format(str(p_sub)))
+                    continue
         if verbose:
             print('Found path {}, checking for files'.format(str(p_sub)))
-        p_file = [p for p in sorted(p_sub.glob('*.{}*'.format(filetype[0:2]))) if p.is_file()]
+        p_file = [p for p in sorted(p_sub.glob('*.{}*'.format(filetype[0:2]))) if p.is_file() if filetype[0:2] in
+                  str(p.suffix)]
         if len(p_file) > 1:
             checkyoself = True
             while checkyoself:
@@ -840,7 +860,7 @@ def crosscheck():
 
 def blast(seq_record, target_species, database, query_species="Homo sapiens", filetype="fasta", blast_type='blastn',
           local_blast=False, expect=0.005, megablast=True, blastoutput_custom="", perc_ident=75,
-          verbose=True, write=True, BLASTDB='/usr/db/blastdb', **kwargs):
+          verbose=True, n_threads=1, use_index=True, write=False, BLASTDB='/usr/db/blastdb/', **kwargs):
     from pathlib import Path
     from Bio import SeqIO
     from Bio.Blast import NCBIWWW
@@ -853,13 +873,18 @@ def blast(seq_record, target_species, database, query_species="Homo sapiens", fi
         print("Now starting BLAST...")
     if kwargs:
         args.update(**kwargs)
-    # Begin by opening blast_out, and then start with the primary BLAST
+    # Begin by opening recblast_out, and then start with the primary BLAST
     if blastoutput_custom == '':
         blastoutput_custom = Path("{0}_blast".format(target_species),
                                   "{0}_{1}_{2}_to_{3}.xml".format(blast_type, seq_record.name,
-                                                                  query_species, target_species))
+                                                                  query_species, target_species)).absolute()
     else:
-        blastoutput_custom = Path(blastoutput_custom)
+        blastoutput_custom = Path(blastoutput_custom).absolute()
+    try:
+        blastoutput_custom.parent.mkdir(parents=True)
+    except FileExistsError:
+        pass
+
     if local_blast:
         import subprocess
         args.update({'-db': database, '-evalue': expect,
@@ -868,7 +893,7 @@ def blast(seq_record, target_species, database, query_species="Homo sapiens", fi
         if blast_type == 'blastn':
             if megablast:
                 args['-task'] = 'megablast'
-            args['-use_index'] = use_index
+            # args['-use_index'] = use_index
             args['-perc_identity'] = perc_ident
         args_expanded = list()
         [(args_expanded.append(j), args_expanded.append(k)) for j, k in args.items()]
@@ -880,25 +905,35 @@ def blast(seq_record, target_species, database, query_species="Homo sapiens", fi
         if blast_type in ["blastn", "blastp", "blastx", "tblastx", "tblastn"]:
             blast_cline = [blast_type] + args_expanded
             try:
-                blast_call = subprocess.Popen([str(i) for i in blast_cline], stdout=subprocess.PIPE,
-                                              stdin=subprocess.PIPE, cwd=BLASTDB,
-                                              universal_newlines=True)
-                blast_result, blast_err = blast_call.communicate(input=seq_record.format('fasta'))
+                blast_handle = (subprocess.check_output([str(i) for i in blast_cline], input=seq_record.format('fasta'),
+                                                        universal_newlines=True, cwd=BLASTDB))
+                if isinstance(blast_handle, str):
+                    blast_result = blast_handle
+                    blast_err = None
+                else:
+                    blast_result, blast_err = blast_handle
+
+                # = blast_call.communicate(input=)
+                if verbose > 3:
+                    print('Blast Result: ', blast_result)
             except subprocess.CalledProcessError:
                 raise
         else:
             raise Exception("Invalid blast choice!")
-
     else:
         args.update(dict(program=str(blast_type), database=str(database), sequence=seq_record.format('fasta'),
                          entrez_query='"{}"[ORGN]'.format(target_species), expect=expect, perc_ident=perc_ident))
         if megablast & (blast_type == 'blastn'):
-            args['task'] = 'megablast'
+            args['megablast'] = True
+        if verbose:
+            print('Submitting Remote BLAST! Options passed:')
+            for k, v in args.items():
+                print('\t {0}\t=\t{1}'.format(k, v))
         blast_handle = NCBIWWW.qblast(**args)
         blast_result = blast_handle.read()
         blast_err = None
-        if verbose:
-            print('Done with Blast!')
+    if verbose:
+        print('Done with Blast!')
     if write:
         with blastoutput_custom.open("w") as fxml:
             fxml.write(blast_result)
@@ -908,9 +943,8 @@ def blast(seq_record, target_species, database, query_species="Homo sapiens", fi
 
 def blast_many(seqfile, target_species, database, query_species="Homo sapiens", filetype="fasta", blast_type='blastn',
                local_blast=False, expect=0.005, megablast=True, blastoutput_custom="", perc_ident=75, verbose=True):
-    # TODO: TEST IT 
+    # TODO: UPDATE THOROUGHLY GIVEN CHANGES IN BLAST
     # TODO: WRITE DOCSTRING
-    # TODO: UPDATE WITH KWARGS
     from Bio import SeqIO
 
     if verbose:
@@ -1003,8 +1037,8 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
         else:
             blast(seq_record=seq_record, target_species=target_species, database=fw_blast_db,
                   query_species=query_species, filetype=infile_type, blast_type=blast_type, local_blast=local_blast_1,
-                  expect=expect, megablast=megablast, blastoutput_custom=str(forward_blast_output),
-                  perc_ident=perc_ident, **kwargs)
+                  expect=expect, megablast=megablast, blastoutput_custom=str(forward_blast_output), write=True,
+                  perc_ident=perc_ident, verbose=verbose, **kwargs)
             if verbose:
                 print('Forward blast done!')
         # Easy part's over - now we need to get the top hits from the forward BLAST, ID them, then compile a new
@@ -1131,7 +1165,7 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
             else:
                 blast(seq_record=entry_record, target_species=query_species, database=rv_blast_db,
                       query_species=target_species, filetype=infile_type, blast_type=blast_type,
-                      local_blast=local_blast_2,
+                      local_blast=local_blast_2, write=True,
                       expect=expect, megablast=megablast, blastoutput_custom=str(reverse_blast_output),
                       perc_ident=perc_ident, **kwargs)
             if verbose:
