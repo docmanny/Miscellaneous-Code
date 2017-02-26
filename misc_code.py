@@ -962,7 +962,7 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
              query_species="Homo sapiens", blast_type='blastn', local_blast_1=False, local_blast_2=False,
              rv_blast_db="nt", expect=10, perc_score=0.50, perc_ident=50, perc_length=0.5,
              megablast=True, email='', id_type='brute', fw_source="psql", fw_id_db="", batch_size=50,
-             passwd='', fw_id_db_version='1.0', verbose=True, **kwargs):
+             passwd='', fw_id_db_version='1.0', verbose=True, BLASTDB='/usr/db/blastdb', **kwargs):
     """By Reciprocal BLAST, finds orthologs in Species 2 of a list of genes from Species 1 and annotates them.
 
     Reciprocal BLAST involves using a primary BLAST to identify putative orthologs in the "target_species" using
@@ -983,6 +983,7 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
     from pathlib import Path
     from Bio import SeqIO, __version__
     from Bio.Blast import NCBIXML
+    from operator import itemgetter
 
     if verbose:
         print("Now starting RecBlast...")
@@ -1038,7 +1039,7 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
             blast(seq_record=seq_record, target_species=target_species, database=fw_blast_db,
                   query_species=query_species, filetype=infile_type, blast_type=blast_type, local_blast=local_blast_1,
                   expect=expect, megablast=megablast, blastoutput_custom=str(forward_blast_output), write=True,
-                  perc_ident=perc_ident, verbose=verbose, **kwargs)
+                  perc_ident=perc_ident, verbose=verbose, BLASTDB=BLASTDB, **kwargs)
             if verbose:
                 print('Forward blast done!')
         # Easy part's over - now we need to get the top hits from the forward BLAST, ID them, then compile a new
@@ -1167,7 +1168,7 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
                       query_species=target_species, filetype=infile_type, blast_type=blast_type,
                       local_blast=local_blast_2, write=True,
                       expect=expect, megablast=megablast, blastoutput_custom=str(reverse_blast_output),
-                      perc_ident=perc_ident, **kwargs)
+                      perc_ident=perc_ident, BLASTDB=BLASTDB, **kwargs)
             if verbose:
                 print('Done with Reverse Blast!')
             with reverse_blast_output.open("r") as reverse_blast_hits:
@@ -1179,7 +1180,7 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
                 subject_range2 = []
                 query_start_end2 = []
                 for alignment2 in blastrecord2.alignments:
-                    if verbose:
+                    if verbose > 4:
                         print('Sorting through alignment\'s HSPs to get top scores of all alignments...')
                     subject_range_hsp2 = []
                     query_start_end_hsp2 = []
@@ -1191,10 +1192,10 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
                     hsp_scorelist2.sort(reverse=True)
                     query_start_end2.append([i for i in merge_ranges(query_start_end_hsp2)])
                     subject_range2.append((subject_range_hsp2[0], subject_range_hsp2[-1]))
-                    if verbose:
+                    if verbose > 4:
                         print("HSP Score List: \n\t", hsp_scorelist2)
                     align_scorelist2.append(hsp_scorelist2[0])
-                    if verbose:
+                    if verbose > 4:
                         print("Alignment Score List: \n\t", align_scorelist2)
                         print("Query_start_end: \n\t", query_start_end2)
                         print("Subject Range: \n\t", subject_range2)
@@ -1205,39 +1206,37 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
                 if verbose:
                     print('Annotating BLAST results')
                 has_written2 = False
+                reverse_blast_annotations = list()
                 for align_index2, alignment2 in enumerate(blastrecord2.alignments):
                     blast_got_hit2 = False
                     for hsp2 in alignment2.hsps:
                         if (hsp2.score >= (perc_score * align_scorelist2[align_index2])):
-                            if verbose:
+                            if verbose > 4:
                                 print('hsp score above threshold')
                             if (hsp2.expect <= expect):
-                                if verbose:
+                                if verbose > 4:
                                     print('hsp expect below threshold')
-                                if verbose:
+                                if verbose > 4:
                                     print('HSP Length: ', query_start_end2[align_index2])
                                 length_alignment = sum([i[-1] - i[0] for i in query_start_end2[align_index2]])
                                 align_len_threshold = blastrecord2.query_length * perc_length
-                                if verbose:
+                                if verbose > 4:
                                     print(length_alignment)
                                     print(align_len_threshold)
                                 if length_alignment >= align_len_threshold:
                                     print('hsp perc length above threshold')
                                     if verbose:
                                         print('Found hit!')
-                                    entry_record.id += '\t||{0} ({1})'.format(alignment.title +
-                                                                              ' [:{0}-{1}]'.format(
-                                                                                  subject_range2[align_index2][0],
-                                                                                  subject_range2[align_index2][0]
-                                                                              ), hsp.score)
-                                    SeqIO.write(entry_record, rb_out, output_type)
+                                    reverse_blast_annotations.append((alignment2.title, '[:{0}-{1}]'.format(
+                                        subject_range2[align_index2][0],
+                                        subject_range2[align_index2][0]),
+                                                                      hsp2.score))
                                     has_written2 = True
                                     blast_got_hit2 = True
                                 else:
                                     print('WARNING HSP LENGTH BELOW THRESHOLD')
-                                    print(sum([i[-1] - i[0] for i in
-                                               query_start_end2[align_index2]]) / blastrecord2.query_length,
-                                          ' not greater than ', perc_length)
+                                    print(length_alignment,
+                                          ' not greater than ', align_len_threshold)
                             else:
                                 print('WARNING HSP EXPECT ABOVE THRESHOLD')
                                 print(hsp2.expect, 'not less than', expect)
@@ -1248,6 +1247,18 @@ def recblast(seqfile, target_species, fw_blast_db='chromosome', infile_type="fas
                             # continue
                     if not blast_got_hit2:
                         print('NOTE: Alignment {} was not used to annotate.'.format(alignment.title))
+                if reverse_blast_annotations:
+                    sorted(reverse_blast_annotations, reverse=True, key=itemgetter(2))
+                    annotations = ['\t||{0} {1} ({2})'.format(anno[0], anno[1], anno[2]) for anno
+                                   in reverse_blast_annotations]
+                    if verbose:
+                        print('********************************************')
+                        print(annotations)
+                        print('********************************************')
+                    entry_record.description += ''.join(annotations)
+                    if verbose > 3:
+                        print(entry_record)
+                    SeqIO.write(entry_record, rb_out, output_type)
                 if not has_written2:
                     print(Warning('NONE OF THE REVERSE BLAST HITS FOR THIS RUN MET ANNOTATION CRITERIA!'))
                     continue
