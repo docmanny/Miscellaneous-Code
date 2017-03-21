@@ -299,6 +299,13 @@ def biosql_recordids(sub_db_name, passwd, dumpfile=True, driver="psycopg2", user
         # End of Function
 
 
+def biosql_get_sub_db_names(passwd, db="bioseqdb", driver="psycopg2", user="postgres", host="localhost"):
+    from BioSQL import BioSeqDatabase
+    server = BioSeqDatabase.open_database(driver=driver, user=user, passwd=passwd, host=host, db=db)
+    sub_db_name_list = [i for i in server.keys()]
+    return sub_db_name_list
+
+
 def biosql_getrecord(sub_db_name, passwd, id_list=list(), id_type='accession', driver="psycopg2", user="postgres",
                      host="localhost", db="bioseqdb", verbose=True, parallel=False):  # TODO: FILL OUT DOCSTRING
     """

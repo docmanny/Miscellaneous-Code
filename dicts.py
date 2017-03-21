@@ -187,3 +187,101 @@ class RecBlastContainer(dict):
                 else:
                     strobj += ''.join(['\t', indent, '|---', str(v).replace('\n', '\n\t' + indent + '|--- '), '\n'])
         return strobj
+
+
+class RecBlastContainer(dict):
+    def __init__(self, *args, **kwargs):
+        transtab = str.maketrans('!@#$%^&*();:.,\'\"/\\?<>|[]{}-=+', '_____________________________')
+        super(RecBlastContainer, self).__init__(*args, **kwargs)
+        for arg in args:
+            if isinstance(arg, dict):
+                for k, v in arg.items():
+                    if k == self.transtab:
+                        continue
+                    k.replace('.', '_')
+                    if type(v) is dict:
+                        v = RecBlastContainer(v)
+                    else:
+                        pass
+                    self[k.translate(transtab)] = v
+
+        if kwargs:
+            for k, v in kwargs.items():
+                if k == self.transtab:
+                    continue
+                k.replace('.', '_')
+                if k == 'proc_id':
+                    if isinstance(v, int):
+                        v = 'x' + str(v)
+                    self.proc_id = v
+                elif k == 'seq_record':
+                    self.seq_record = v
+                if isinstance(v, dict):
+                    v = RecBlastContainer(v)
+                    self[k.translate(transtab)] = v
+                else:
+                    self[k.translate(transtab)] = v
+
+    def __getattr__(self, attr):
+        if attr == 'transtab':
+            return str.maketrans('!@#$%^&*();:.,\'\"/\\?<>|[]{}-=+', '_____________________________')
+        try:
+            self[attr.translate(self.transtab)]
+        except KeyError:
+            raise
+        except AssertionError:
+            raise
+        return self.get(attr.translate(self.transtab))
+
+    def __setattr__(self, key, value):
+        self.__setitem__(key.translate(self.transtab), value)
+
+    def __setitem__(self, key, value):
+        super(RecBlastContainer, self).__setitem__(key, value)
+        self.__dict__.update({key.translate(self.transtab): value})
+
+    def __delattr__(self, item):
+        self.__delitem__(item.translate(self.transtab))
+
+    def __delitem__(self, key):
+        super(RecBlastContainer, self).__delitem__(key)
+        del self.__dict__[key.translate(self.transtab)]
+
+    def __getstate__(self):
+        return self
+
+    def __setstate__(self, state):
+        self.update(state)
+        self.__dict__ = self
+
+    def __add__(self, other):
+        assert isinstance(other, RecBlastContainer), "Other is not a RecBlastContainer!"
+        try:
+            self.proc_id
+        except KeyError:
+            raise Exception('Attribute proc_id must be defined!!!')
+        try:
+            self.seq_record
+        except KeyError:
+            raise Exception('Attribute seq_record must be defined!!!')
+        if self.proc_id == other.proc_id:
+            return RecBlastContainer({'proc_id': self.proc_id, self.seq_record.name.replace('.', '_'): self,
+                                      other.seq_record.name.replace('.', '_'): other})
+        else:
+            return RecBlastContainer({str(self.proc_id): self, str(other.proc_id): other},
+                                     proc_id=[self.proc_id, other.proc_id])
+
+    def __str__(self, indent=''):
+        strobj = ''
+        if isinstance(self, dict):
+            for k, v in self.items():
+                if indent:
+                    strobj += ''.join([indent, '|---- Key "', str(k), '":', '\n'])
+                else:
+                    strobj += ''.join([indent, '| Key "', str(k), '":', '\n'])
+                if isinstance(v, dict):
+                    indent += '\t'
+                    strobj += v.__str__(indent)
+                else:
+                    strobj += ''.join(['\t', indent, '|---', str(v).replace('\n', '\n\t' + indent + '|--- '), '\n'])
+        return strobj
